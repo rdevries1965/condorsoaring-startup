@@ -42,7 +42,7 @@ internal static class CondorAutomation
     public static async Task AutomateStartAsync(AppSettings settings, string sessionId, CancellationToken token)
     {
         if (!settings.AutomateCondorMenus) return;
-        var main = await WaitForCondorWindowAsync(IsMainTitle, "Condor-hoofdscherm", settings.WindowTimeoutSeconds, sessionId, token);
+        var main = await WaitForMainMenuWindowAsync("Condor-hoofdscherm", settings.WindowTimeoutSeconds, sessionId, token);
         await ClickChildAsync(main, "FREE FLIGHT", settings.WindowTimeoutSeconds, sessionId, token);
 
         var planner = await WaitForCondorWindowAsync(IsPlannerTitle, "FLIGHT PLANNER", settings.WindowTimeoutSeconds, sessionId, token);
@@ -86,7 +86,7 @@ internal static class CondorAutomation
     {
         var debriefing = await WaitForCondorWindowAsync(IsDebriefingTitle, "DEBRIEFING", settings.WindowTimeoutSeconds, sessionId, token);
         await ClickChildAsync(debriefing, "MAIN MENU", settings.WindowTimeoutSeconds, sessionId, token);
-        var main = await WaitForCondorWindowAsync(IsMainTitle, "Condor-hoofdscherm na DEBRIEFING", settings.WindowTimeoutSeconds, sessionId, token);
+        var main = await WaitForMainMenuWindowAsync("Condor-hoofdscherm na DEBRIEFING", settings.WindowTimeoutSeconds, sessionId, token);
         Activate(main); PostMessage(main, WmClose, IntPtr.Zero, IntPtr.Zero);
         Logger.SessionInfo(sessionId, "Verzoek tot sluiten van Condor-hoofdvenster verzonden.");
 
@@ -125,6 +125,40 @@ internal static class CondorAutomation
             await Task.Delay(250, token);
         }
         throw new TimeoutException($"Het verwachte Condor-venster verscheen niet binnen {timeoutSeconds} seconden: {description}.");
+    }
+
+    private static async Task<IntPtr> WaitForMainMenuWindowAsync(
+        string description, int timeoutSeconds, string sessionId, CancellationToken token)
+    {
+        var until = DateTime.UtcNow.AddSeconds(timeoutSeconds);
+        while (DateTime.UtcNow < until)
+        {
+            token.ThrowIfCancellationRequested();
+            IntPtr found = IntPtr.Zero;
+            EnumWindows((handle, _) =>
+            {
+                if (!IsWindowVisible(handle) || !BelongsToCondor(handle)) return true;
+                var title = Text(handle);
+                if (!IsMainTitle(title)) return true;
+
+                // 'Condor 3' is ook de titel van een tijdelijk splashvenster zonder
+                // controls. Alleen een version-titel of een venster met FREE FLIGHT
+                // is het echte hoofdmenu.
+                var isVersionWindow = title.Contains("Condor version", StringComparison.OrdinalIgnoreCase);
+                if (!isVersionWindow && FindChildByCaption(handle, "FREE FLIGHT") == IntPtr.Zero) return true;
+                found = handle;
+                return false;
+            }, IntPtr.Zero);
+
+            if (found != IntPtr.Zero)
+            {
+                Activate(found);
+                Logger.SessionInfo(sessionId, $"Condor-hoofdmenu gevonden: '{Text(found)}'.");
+                return found;
+            }
+            await Task.Delay(250, token);
+        }
+        throw new TimeoutException($"Het verwachte Condor-hoofdmenu verscheen niet binnen {timeoutSeconds} seconden: {description}.");
     }
 
     private static bool TryFindCondorWindow(Func<string, bool> titleMatch, out IntPtr found)
@@ -229,5 +263,20 @@ internal static class CondorAutomation
             if (buffer.ToString().Equals(className, StringComparison.OrdinalIgnoreCase)) { found = handle; return false; }
             return true;
         }, IntPtr.Zero); return found;
+    }
+
+    private static IntPtr FindChildByCaption(IntPtr parent, string caption)
+    {
+        IntPtr found = IntPtr.Zero;
+        EnumChildWindows(parent, (handle, _) =>
+        {
+            if (Normalize(Text(handle)).Contains(Normalize(caption), StringComparison.OrdinalIgnoreCase))
+            {
+                found = handle;
+                return false;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
     }
 }

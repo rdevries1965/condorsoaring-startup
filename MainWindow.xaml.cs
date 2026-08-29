@@ -15,6 +15,7 @@ public partial class MainWindow : Window
     private readonly FlightStateMachine _flightState = new();
     private readonly CancellationTokenSource _lifetime = new();
     private Process? _activeCondor;
+    private bool _isClosing;
 
     public MainWindow(AppSettings appSettings, UserSettings userSettings)
     {
@@ -191,6 +192,7 @@ public partial class MainWindow : Window
 
     private void RestoreLauncher()
     {
+        if (_isClosing || !IsLoaded || Dispatcher.HasShutdownStarted) return;
         Show(); WindowState = WindowState.Maximized; ShowInTaskbar = true;
         if (!Activate()) { Topmost = true; Topmost = false; }
     }
@@ -247,5 +249,5 @@ public partial class MainWindow : Window
     }
 
     private void Exit_Click(object sender, RoutedEventArgs e) => Close();
-    protected override void OnClosed(EventArgs e) { _lifetime.Cancel(); _lifetime.Dispose(); _flightLock.Dispose(); base.OnClosed(e); }
+    protected override void OnClosed(EventArgs e) { _isClosing = true; _lifetime.Cancel(); base.OnClosed(e); }
 }
