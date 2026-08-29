@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -7,193 +6,177 @@ namespace GoZCCondorLauncher;
 
 internal static class CondorAutomation
 {
-    private const uint BmClick = 0x00F5;
-    private const uint WmGetText = 0x000D;
-    private const uint WmMouseMove = 0x0200;
-    private const uint WmLButtonDown = 0x0201;
-    private const uint WmLButtonUp = 0x0202;
-    private const uint WmClose = 0x0010;
-    private const uint WmKeyDown = 0x0100;
-    private const uint WmKeyUp = 0x0101;
-    private const int VkReturn = 0x0D;
-    private const int MkLButton = 0x0001;
-    private const uint MouseEventLeftDown = 0x0002;
-    private const uint MouseEventLeftUp = 0x0004;
+    private const uint WmGetText = 0x000D, WmClose = 0x0010, WmKeyDown = 0x0100, WmKeyUp = 0x0101;
+    private const uint MouseLeftDown = 0x0002, MouseLeftUp = 0x0004;
+    private const int VkReturn = 0x0D, SwRestore = 9;
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Rect
-    {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Point
-    {
-        public int X;
-        public int Y;
-    }
+    [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] private struct Point { public int X, Y; }
 
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
     [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc callback, IntPtr lParam);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int maxCount);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr hWnd, StringBuilder text, int maxCount);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
-    [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int command);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
-    [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr hWnd, out Rect rect);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out Rect rect);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out Point point);
     [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] private static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
     [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
     private static extern IntPtr SendMessageText(IntPtr hWnd, uint msg, IntPtr wParam, StringBuilder lParam);
 
-    public static async Task StartFlightAsync(AppSettings appSettings, UserSettings userSettings, CancellationToken token)
+    public static Process StartCondor(UserSettings settings, string sessionId)
     {
-        _ = Process.Start(new ProcessStartInfo(userSettings.CondorExe) { WorkingDirectory = userSettings.CondorMainFolder })
+        var process = Process.Start(new ProcessStartInfo(settings.CondorExe) { WorkingDirectory = settings.CondorMainFolder })
             ?? throw new InvalidOperationException("Condor kon niet worden gestart.");
-        Logger.Info("Condor gestart.");
-        if (!appSettings.AutomateCondorMenus) return;
-
-        // Condor kan na het opstarten een ander proces gebruiken. Net als het oude
-        // AHK-script zoeken we daarom op venstertitel en niet op het eerste proces-id.
-        var main = await WaitForWindowAsync(
-            t => t.Contains("Condor version", StringComparison.OrdinalIgnoreCase),
-            "Condor-hoofdscherm ('Condor version ...')", appSettings.WindowTimeoutSeconds, token);
-        await ClickChildAsync(main, "FREE FLIGHT", appSettings.WindowTimeoutSeconds, token, usePhysicalMouse: true);
-
-        var planner = await WaitForWindowAsync(
-            t => t.Contains("FLIGHT PLANNER", StringComparison.OrdinalIgnoreCase),
-            "FLIGHT PLANNER", appSettings.WindowTimeoutSeconds, token);
-        await StartFlightFromPlannerAsync(planner, appSettings.WindowTimeoutSeconds, token);
-        Logger.Info("Vluchtopdracht gestart.");
+        Logger.SessionInfo(sessionId, $"Condor gestart; initiële process-ID: {process.Id}.");
+        return process;
     }
 
-    private static async Task StartFlightFromPlannerAsync(IntPtr planner, int timeoutSeconds, CancellationToken token)
+    public static async Task AutomateStartAsync(AppSettings settings, string sessionId, CancellationToken token)
     {
-        // Bij grotere scenario's is het planner-venster al zichtbaar terwijl Condor
-        // landschap en taak nog inleest. Wacht daarom voordat Start flight wordt bediend.
-        await Task.Delay(2000, token);
+        if (!settings.AutomateCondorMenus) return;
+        var main = await WaitForCondorWindowAsync(IsMainTitle, "Condor-hoofdscherm", settings.WindowTimeoutSeconds, sessionId, token);
+        await ClickChildAsync(main, "FREE FLIGHT", settings.WindowTimeoutSeconds, sessionId, token);
 
+        var planner = await WaitForCondorWindowAsync(IsPlannerTitle, "FLIGHT PLANNER", settings.WindowTimeoutSeconds, sessionId, token);
+        await Task.Delay(2000, token);
         for (var attempt = 1; attempt <= 3; attempt++)
         {
-            if (!IsPlannerVisible(planner)) return;
-            Logger.Info($"Start flight-poging {attempt}; wachten op een gereed Condor Flight Planner-venster.");
-            await ClickChildAsync(planner, "Start flight", timeoutSeconds, token, usePhysicalMouse: true);
-
-            var until = DateTime.UtcNow.AddSeconds(6);
-            while (DateTime.UtcNow < until)
+            if (!WindowStillMatches(planner, IsPlannerTitle)) return;
+            Logger.SessionInfo(sessionId, $"Start flight-poging {attempt}.");
+            await ClickChildAsync(planner, "Start flight", settings.WindowTimeoutSeconds, sessionId, token);
+            if (await WaitUntilWindowGoneAsync(planner, IsPlannerTitle, TimeSpan.FromSeconds(6), token))
             {
-                token.ThrowIfCancellationRequested();
-                if (!IsPlannerVisible(planner))
-                {
-                    Logger.Info("FLIGHT PLANNER is gesloten; de vluchtstart is door Condor geaccepteerd.");
-                    return;
-                }
-                await Task.Delay(250, token);
+                Logger.SessionInfo(sessionId, "FLIGHT PLANNER gesloten; vluchtstart geaccepteerd.");
+                return;
             }
-
-            if (attempt < 3) await Task.Delay(1500, token);
+            await Task.Delay(1000, token);
         }
-
-        throw new InvalidOperationException(
-            "Condor bleef in FLIGHT PLANNER staan nadat 'Start flight' drie keer is aangeklikt. " +
-            "Controleer in Condor of het scenario een ontbrekend landschap, vliegtuig of andere foutmelding toont.");
+        throw new InvalidOperationException("Condor bleef in FLIGHT PLANNER staan nadat 'Start flight' drie keer is aangeklikt.");
     }
 
-    private static bool IsPlannerVisible(IntPtr planner) => IsWindow(planner) && IsWindowVisible(planner)
-        && Text(planner).Contains("FLIGHT PLANNER", StringComparison.OrdinalIgnoreCase);
-
-    public static async Task FinishFlightAndCloseCondorAsync(AppSettings appSettings, CancellationToken token)
+    public static async Task<CondorEndReason> WaitForEndAsync(string sessionId, CancellationToken token)
     {
-        Logger.Info("Wachten tot de vlucht wordt afgesloten en DEBRIEFING verschijnt.");
-        var debriefing = await WaitForWindowAsync(
-            t => t.Contains("DEBRIEFING", StringComparison.OrdinalIgnoreCase),
-            "DEBRIEFING", 12 * 60 * 60, token);
+        Logger.SessionInfo(sessionId, "Condor-sessie wordt bewaakt; wachten op DEBRIEFING of procesbeëindiging.");
+        while (true)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!CondorProcessService.AnyRunning())
+            {
+                Logger.SessionInfo(sessionId, "Condor-processen zijn handmatig beëindigd of verdwenen.");
+                return CondorEndReason.ProcessExited;
+            }
+            if (TryFindCondorWindow(IsDebriefingTitle, out _))
+            {
+                Logger.SessionInfo(sessionId, "DEBRIEFING verschenen.");
+                return CondorEndReason.Debriefing;
+            }
+            await Task.Delay(300, token);
+        }
+    }
 
-        await ClickChildAsync(debriefing, "MAIN MENU", appSettings.WindowTimeoutSeconds, token, usePhysicalMouse: true);
+    public static async Task CloseAfterDebriefingAsync(AppSettings settings, string sessionId, CancellationToken token)
+    {
+        var debriefing = await WaitForCondorWindowAsync(IsDebriefingTitle, "DEBRIEFING", settings.WindowTimeoutSeconds, sessionId, token);
+        await ClickChildAsync(debriefing, "MAIN MENU", settings.WindowTimeoutSeconds, sessionId, token);
+        var main = await WaitForCondorWindowAsync(IsMainTitle, "Condor-hoofdscherm na DEBRIEFING", settings.WindowTimeoutSeconds, sessionId, token);
+        Activate(main); PostMessage(main, WmClose, IntPtr.Zero, IntPtr.Zero);
+        Logger.SessionInfo(sessionId, "Verzoek tot sluiten van Condor-hoofdvenster verzonden.");
 
-        var main = await WaitForWindowAsync(
-            t => t.Contains("Condor version", StringComparison.OrdinalIgnoreCase),
-            "Condor-hoofdscherm na debriefing", appSettings.WindowTimeoutSeconds, token);
-        SetForegroundWindow(main);
-        PostMessage(main, WmClose, IntPtr.Zero, IntPtr.Zero);
-        Logger.Info("Condor-hoofdvenster is gesloten; wachten op afsluitbevestiging.");
-
-        var confirmation = await TryWaitForWindowAsync(
-            t => t.Equals("Condor 3", StringComparison.OrdinalIgnoreCase), 15, token);
+        var confirmation = await TryWaitForAnyWindowAsync(IsConfirmationTitle, 15, token);
         if (confirmation != IntPtr.Zero)
         {
-            SetForegroundWindow(confirmation);
-            var confirmButton = FindChildByClass(confirmation, "TspSkinButton2");
-            var keyTarget = confirmButton != IntPtr.Zero ? confirmButton : confirmation;
-            PostMessage(keyTarget, WmKeyDown, (IntPtr)VkReturn, IntPtr.Zero);
+            Logger.SessionInfo(sessionId, $"Afsluitbevestiging verschenen: '{Text(confirmation)}'.");
+            Activate(confirmation);
+            var button = FindChildByClass(confirmation, "TspSkinButton2");
+            var target = button != IntPtr.Zero ? button : confirmation;
+            PostMessage(target, WmKeyDown, (IntPtr)VkReturn, IntPtr.Zero);
             await Task.Delay(80, token);
-            PostMessage(keyTarget, WmKeyUp, (IntPtr)VkReturn, IntPtr.Zero);
-            Logger.Info("Afsluiten van Condor bevestigd met Enter.");
-        }
-        else
-        {
-            Logger.Info("Geen afsluitbevestiging gevonden; Condor lijkt direct te zijn afgesloten.");
+            PostMessage(target, WmKeyUp, (IntPtr)VkReturn, IntPtr.Zero);
+            Logger.SessionInfo(sessionId, "Afsluiten bevestigd met Enter.");
         }
     }
 
-    private static async Task<IntPtr> WaitForWindowAsync(
-        Func<string, bool> match, string description, int timeoutSeconds, CancellationToken token)
+    public static void BringRunningCondorToFront()
+    {
+        if (TryFindCondorWindow(_ => true, out var window)) Activate(window);
+    }
+
+    private static async Task<IntPtr> WaitForCondorWindowAsync(Func<string, bool> titleMatch, string description,
+        int timeoutSeconds, string sessionId, CancellationToken token)
     {
         var until = DateTime.UtcNow.AddSeconds(timeoutSeconds);
         while (DateTime.UtcNow < until)
         {
             token.ThrowIfCancellationRequested();
-            IntPtr found = IntPtr.Zero;
-            EnumWindows((handle, _) =>
+            if (TryFindCondorWindow(titleMatch, out var found))
             {
-                var title = Text(handle);
-                if (IsWindowVisible(handle) && match(title)) { found = handle; return false; }
-                return true;
-            }, IntPtr.Zero);
-            if (found != IntPtr.Zero)
-            {
-                SetForegroundWindow(found);
-                Logger.Info($"Venster gevonden: {Text(found)}");
+                Activate(found);
+                Logger.SessionInfo(sessionId, $"Venster gevonden: '{Text(found)}'.");
                 return found;
             }
             await Task.Delay(250, token);
         }
-        throw new TimeoutException($"Het verwachte venster verscheen niet binnen {timeoutSeconds} seconden: {description}.");
+        throw new TimeoutException($"Het verwachte Condor-venster verscheen niet binnen {timeoutSeconds} seconden: {description}.");
     }
 
-    private static async Task<IntPtr> TryWaitForWindowAsync(
-        Func<string, bool> match, int timeoutSeconds, CancellationToken token)
+    private static bool TryFindCondorWindow(Func<string, bool> titleMatch, out IntPtr found)
     {
-        var until = DateTime.UtcNow.AddSeconds(timeoutSeconds);
+        var result = IntPtr.Zero;
+        EnumWindows((handle, _) =>
+        {
+            var title = Text(handle);
+            if (!IsWindowVisible(handle) || !titleMatch(title) || !BelongsToCondor(handle)) return true;
+            result = handle; return false;
+        }, IntPtr.Zero);
+        found = result; return result != IntPtr.Zero;
+    }
+
+    private static bool BelongsToCondor(IntPtr handle)
+    {
+        GetWindowThreadProcessId(handle, out var processId);
+        if (processId == 0 || processId == Environment.ProcessId) return false;
+        try { return Process.GetProcessById((int)processId).ProcessName.Equals("Condor", StringComparison.OrdinalIgnoreCase); }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { return false; }
+    }
+
+    private static bool IsMainTitle(string title) => title.Contains("Condor version", StringComparison.OrdinalIgnoreCase)
+        || title.Equals("Condor 3", StringComparison.OrdinalIgnoreCase)
+        || (title.StartsWith("Condor", StringComparison.OrdinalIgnoreCase) && !IsPlannerTitle(title) && !IsDebriefingTitle(title));
+    private static bool IsPlannerTitle(string title) => title.Contains("FLIGHT PLANNER", StringComparison.OrdinalIgnoreCase);
+    private static bool IsDebriefingTitle(string title) => title.Contains("DEBRIEFING", StringComparison.OrdinalIgnoreCase);
+    private static bool IsConfirmationTitle(string title) => title.Equals("Condor 3", StringComparison.OrdinalIgnoreCase);
+
+    private static void Activate(IntPtr window) { if (IsIconic(window)) ShowWindow(window, SwRestore); SetForegroundWindow(window); }
+    private static bool WindowStillMatches(IntPtr window, Func<string, bool> match) => IsWindowVisible(window) && match(Text(window));
+    private static async Task<bool> WaitUntilWindowGoneAsync(IntPtr window, Func<string, bool> match, TimeSpan timeout, CancellationToken token)
+    {
+        var until = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < until) { if (!WindowStillMatches(window, match)) return true; await Task.Delay(250, token); }
+        return !WindowStillMatches(window, match);
+    }
+
+    private static async Task<IntPtr> TryWaitForAnyWindowAsync(Func<string, bool> match, int seconds, CancellationToken token)
+    {
+        var until = DateTime.UtcNow.AddSeconds(seconds);
         while (DateTime.UtcNow < until)
         {
-            token.ThrowIfCancellationRequested();
             IntPtr found = IntPtr.Zero;
-            EnumWindows((handle, _) =>
-            {
-                if (IsWindowVisible(handle) && match(Text(handle)))
-                {
-                    found = handle;
-                    return false;
-                }
-                return true;
-            }, IntPtr.Zero);
+            EnumWindows((handle, _) => { if (IsWindowVisible(handle) && match(Text(handle))) { found = handle; return false; } return true; }, IntPtr.Zero);
             if (found != IntPtr.Zero) return found;
             await Task.Delay(250, token);
         }
         return IntPtr.Zero;
     }
 
-    private static async Task ClickChildAsync(
-        IntPtr parent, string caption, int timeoutSeconds, CancellationToken token, bool usePhysicalMouse)
+    private static async Task ClickChildAsync(IntPtr parent, string caption, int timeoutSeconds, string sessionId, CancellationToken token)
     {
         var until = DateTime.UtcNow.AddSeconds(timeoutSeconds);
         while (DateTime.UtcNow < until)
@@ -201,113 +184,50 @@ internal static class CondorAutomation
             IntPtr found = IntPtr.Zero;
             EnumChildWindows(parent, (handle, _) =>
             {
-                if (Normalized(Text(handle)).Contains(Normalized(caption), StringComparison.OrdinalIgnoreCase))
-                {
-                    found = handle;
-                    return false;
-                }
+                if (Normalize(Text(handle)).Contains(Normalize(caption), StringComparison.OrdinalIgnoreCase)) { found = handle; return false; }
                 return true;
             }, IntPtr.Zero);
             if (found != IntPtr.Zero)
             {
-                SetForegroundWindow(parent);
-                if (usePhysicalMouse)
-                    await PhysicalClickAsync(found, token);
-                else
-                    await ClickLikeAutoHotkeyAsync(found, token);
-                Logger.Info($"{(usePhysicalMouse ? "Fysieke muisklik" : "Klik")} verzonden naar: {caption} (gevonden als '{Text(found)}').");
-                return;
+                Activate(parent); await PhysicalClickAsync(found, token);
+                Logger.SessionInfo(sessionId, $"Fysieke klik op '{caption}' (controltekst '{Text(found)}')."); return;
             }
             await Task.Delay(250, token);
         }
-        var controls = ChildTexts(parent);
-        Logger.Error($"Knop '{caption}' niet gevonden in '{Text(parent)}'. Gevonden controlteksten: {controls}");
-        throw new TimeoutException($"De knop '{caption}' is niet gevonden in het Condor-venster '{Text(parent)}'. " +
-            $"Controleer het logbestand voor de gevonden controlteksten.");
-    }
-
-    private static string Text(IntPtr handle)
-    {
-        var buffer = new StringBuilder(512);
-        GetWindowText(handle, buffer, buffer.Capacity);
-        if (buffer.Length == 0)
-            SendMessageText(handle, WmGetText, (IntPtr)buffer.Capacity, buffer);
-        return buffer.ToString().Trim();
-    }
-
-    private static async Task ClickLikeAutoHotkeyAsync(IntPtr control, CancellationToken token)
-    {
-        if (!GetClientRect(control, out var rect))
-        {
-            // Standaard Windows-knoppen ondersteunen BM_CLICK; behoud dit als fallback.
-            SendMessage(control, BmClick, IntPtr.Zero, IntPtr.Zero);
-            return;
-        }
-
-        var x = Math.Max(1, (rect.Right - rect.Left) / 2);
-        var y = Math.Max(1, (rect.Bottom - rect.Top) / 2);
-        var point = (IntPtr)((y << 16) | (x & 0xFFFF));
-
-        // Dit bootst AHK ControlClick na. Condors TspSkinButton reageert niet op
-        // BM_CLICK, maar wel op muis-down/up in het midden van de control.
-        PostMessage(control, WmMouseMove, IntPtr.Zero, point);
-        PostMessage(control, WmLButtonDown, (IntPtr)MkLButton, point);
-        await Task.Delay(80, token);
-        PostMessage(control, WmLButtonUp, IntPtr.Zero, point);
+        Logger.SessionError(sessionId, $"Knop '{caption}' niet gevonden in '{Text(parent)}'. Controls: {ChildTexts(parent)}");
+        throw new TimeoutException($"De knop '{caption}' is niet gevonden in het Condor-venster '{Text(parent)}'.");
     }
 
     private static async Task PhysicalClickAsync(IntPtr control, CancellationToken token)
     {
         if (!GetWindowRect(control, out var rect) || rect.Right <= rect.Left || rect.Bottom <= rect.Top)
-        {
-            await ClickLikeAutoHotkeyAsync(control, token);
-            return;
-        }
-
+            throw new InvalidOperationException("De actuele positie van de Condor-knop kon niet worden bepaald.");
         GetCursorPos(out var original);
-        var x = rect.Left + (rect.Right - rect.Left) / 2;
-        var y = rect.Top + (rect.Bottom - rect.Top) / 2;
-
-        await Task.Delay(300, token); // geef SetForegroundWindow tijd om Condor te activeren
-        SetCursorPos(x, y);
-        await Task.Delay(120, token);
-        mouse_event(MouseEventLeftDown, 0, 0, 0, UIntPtr.Zero);
-        await Task.Delay(100, token);
-        mouse_event(MouseEventLeftUp, 0, 0, 0, UIntPtr.Zero);
-        await Task.Delay(250, token);
-        SetCursorPos(original.X, original.Y);
-        Logger.Info($"Fysieke klikpositie voor FREE FLIGHT: X={x}, Y={y}.");
+        var x = rect.Left + (rect.Right - rect.Left) / 2; var y = rect.Top + (rect.Bottom - rect.Top) / 2;
+        await Task.Delay(300, token); SetCursorPos(x, y); await Task.Delay(120, token);
+        mouse_event(MouseLeftDown, 0, 0, 0, UIntPtr.Zero); await Task.Delay(100, token);
+        mouse_event(MouseLeftUp, 0, 0, 0, UIntPtr.Zero); await Task.Delay(250, token); SetCursorPos(original.X, original.Y);
     }
 
-    private static string Normalized(string value) =>
-        string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-
+    private static string Text(IntPtr handle)
+    {
+        var buffer = new StringBuilder(512); GetWindowText(handle, buffer, buffer.Capacity);
+        if (buffer.Length == 0) SendMessageText(handle, WmGetText, (IntPtr)buffer.Capacity, buffer);
+        return buffer.ToString().Trim();
+    }
+    private static string Normalize(string value) => string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     private static string ChildTexts(IntPtr parent)
     {
-        var texts = new List<string>();
-        EnumChildWindows(parent, (handle, _) =>
-        {
-            var text = Text(handle);
-            if (!string.IsNullOrWhiteSpace(text)) texts.Add(text);
-            return true;
-        }, IntPtr.Zero);
+        var texts = new List<string>(); EnumChildWindows(parent, (handle, _) => { var text = Text(handle); if (text.Length > 0) texts.Add(text); return true; }, IntPtr.Zero);
         return texts.Count == 0 ? "(geen teksten)" : string.Join(" | ", texts.Distinct(StringComparer.OrdinalIgnoreCase));
     }
-
     private static IntPtr FindChildByClass(IntPtr parent, string className)
     {
-        IntPtr found = IntPtr.Zero;
-        EnumChildWindows(parent, (handle, _) =>
+        IntPtr found = IntPtr.Zero; EnumChildWindows(parent, (handle, _) =>
         {
-            var buffer = new StringBuilder(256);
-            GetClassName(handle, buffer, buffer.Capacity);
-            if (buffer.ToString().Equals(className, StringComparison.OrdinalIgnoreCase))
-            {
-                found = handle;
-                return false;
-            }
+            var buffer = new StringBuilder(256); GetClassName(handle, buffer, buffer.Capacity);
+            if (buffer.ToString().Equals(className, StringComparison.OrdinalIgnoreCase)) { found = handle; return false; }
             return true;
-        }, IntPtr.Zero);
-        return found;
+        }, IntPtr.Zero); return found;
     }
 }

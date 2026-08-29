@@ -2,7 +2,7 @@ using System.IO;
 
 namespace GoZCCondorLauncher;
 
-internal static class Logger
+public static class Logger
 {
     private static readonly object Sync = new();
     private static readonly string Folder = Path.Combine(
@@ -12,6 +12,8 @@ internal static class Logger
 
     public static void Info(string message) => Write("INFO", message);
     public static void Error(string message) => Write("ERROR", message);
+    public static void SessionInfo(string sessionId, string message) => Info($"[Sessie {sessionId}] {message}");
+    public static void SessionError(string sessionId, string message) => Error($"[Sessie {sessionId}] {message}");
 
     private static void Write(string level, string message)
     {

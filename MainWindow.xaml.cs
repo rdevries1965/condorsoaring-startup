@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Diagnostics;
 
 namespace GoZCCondorLauncher;
 
@@ -10,6 +11,10 @@ public partial class MainWindow : Window
     private readonly AppSettings _appSettings;
     private UserSettings _userSettings;
     private Scenario? _selected;
+    private readonly SemaphoreSlim _flightLock = new(1, 1);
+    private readonly FlightStateMachine _flightState = new();
+    private readonly CancellationTokenSource _lifetime = new();
+    private Process? _activeCondor;
 
     public MainWindow(AppSettings appSettings, UserSettings userSettings)
     {
@@ -49,10 +54,20 @@ public partial class MainWindow : Window
 
     private async void Fly_Click(object sender, RoutedEventArgs e)
     {
-        if (_selected is null) return;
+        if (_selected is null || !await _flightLock.WaitAsync(0)) return;
+        if (!_flightState.TryBegin()) { _flightLock.Release(); return; }
         FlyButton.IsEnabled = false;
+        var sessionId = Guid.NewGuid().ToString("N")[..8];
+        var sessionOwnsCondor = false;
         try
         {
+            Transition(FlightSessionState.Preparing, sessionId, "Voorbereiding gestart.");
+            if (!await EnsureNoExistingCondorAsync())
+            {
+                Logger.SessionInfo(sessionId, "Start geannuleerd omdat Condor al draait.");
+                return;
+            }
+
             StatusText.Text = "Bestanden controleren…";
             var sourcePlan = Path.Combine(_userSettings.FlightPlansFolder, _selected.File);
             var sourceSetup = Path.Combine(_userSettings.PilotFolder,
@@ -65,34 +80,124 @@ public partial class MainWindow : Window
             RequireFile(sourcePlan, "geselecteerde flightplan");
             RequireFile(sourceSetup, VrMode.IsChecked == true ? "VR-configuratie" : "schermconfiguratie");
 
+            Logger.SessionInfo(sessionId, $"Scenario {_selected.Number}; modus {(VrMode.IsChecked == true ? "VR" : "Scherm")}.");
+            Logger.SessionInfo(sessionId, $"Flightplan: '{sourcePlan}' -> '{targetPlan}'.");
+            Logger.SessionInfo(sessionId, $"Setup: '{sourceSetup}' -> '{targetSetup}'.");
+
             Backup(targetPlan);
             Backup(targetSetup);
             File.Copy(sourcePlan, targetPlan, true);
             File.Copy(sourceSetup, targetSetup, true);
-            Logger.Info($"Scenario {_selected.Number} geselecteerd; modus: {(VrMode.IsChecked == true ? "VR" : "Scherm")}.");
-
+            Transition(FlightSessionState.StartingCondor, sessionId, "Configuratie gereed; Condor starten.");
             StatusText.Text = "Condor wordt gestart…";
-            await CondorAutomation.StartFlightAsync(_appSettings, _userSettings, CancellationToken.None);
-            StatusText.Text = "Condor is gestart.";
+            _activeCondor = CondorAutomation.StartCondor(_userSettings, sessionId);
+            sessionOwnsCondor = true;
             WindowState = WindowState.Minimized;
-            await CondorAutomation.FinishFlightAndCloseCondorAsync(_appSettings, CancellationToken.None);
-            WindowState = WindowState.Maximized;
-            Activate();
-            StatusText.Text = "Vlucht afgesloten. Kies een nieuwe opdracht.";
+
+            try
+            {
+                Transition(FlightSessionState.OpeningFlightPlanner, sessionId, "Automatische Condor-menubediening gestart.");
+                await CondorAutomation.AutomateStartAsync(_appSettings, sessionId, _lifetime.Token);
+                Transition(FlightSessionState.Flying, sessionId, "Vluchtopdracht gestart.");
+            }
+            catch (Exception automationError) when (automationError is not OperationCanceledException)
+            {
+                Logger.SessionError(sessionId, $"Automatische menubediening niet voltooid: {automationError}");
+                CondorAutomation.BringRunningCondorToFront();
+                MessageBox.Show("Condor is gestart, maar de automatische menubediening is niet voltooid.\n\n" +
+                    "Ga handmatig verder in Condor. De launcher blijft de Condor-sessie bewaken.",
+                    "GoZC Launcher", MessageBoxButton.OK, MessageBoxImage.Warning);
+                Transition(FlightSessionState.Flying, sessionId, "Handmatige voortzetting; procesbewaking blijft actief.");
+            }
+
+            var endReason = await CondorAutomation.WaitForEndAsync(sessionId, _lifetime.Token);
+            if (endReason == CondorEndReason.Debriefing)
+            {
+                Transition(FlightSessionState.ClosingCondor, sessionId, "DEBRIEFING verwerken en Condor sluiten.");
+                await CondorAutomation.CloseAfterDebriefingAsync(_appSettings, sessionId, _lifetime.Token);
+            }
+
+            Transition(FlightSessionState.WaitingForExit, sessionId, "Wachten tot alle Condor-processen beëindigd zijn.");
+            if (!await CondorProcessService.WaitForAllExitedAsync(TimeSpan.FromSeconds(30), _lifetime.Token))
+                await WaitForManualCondorExitAsync(sessionId);
+
+            if (!CondorProcessService.AnyRunning())
+                Logger.SessionInfo(sessionId, $"Condor volledig beëindigd om {DateTime.Now:HH:mm:ss}.");
         }
+        catch (OperationCanceledException) { Logger.SessionInfo(sessionId, "Sessiecontrole geannuleerd omdat de launcher sluit."); }
         catch (Exception ex)
         {
-            Logger.Error(ex.ToString());
-            if (WindowState == WindowState.Minimized)
-            {
-                WindowState = WindowState.Maximized;
-                Activate();
-            }
-            StatusText.Text = "Starten mislukt.";
-            MessageBox.Show($"De vlucht kon niet worden gestart.\n\n{ex.Message}",
+            var failedStep = _flightState.State;
+            Transition(FlightSessionState.Error, sessionId, $"Fout: {ex}");
+            RestoreLauncher();
+            StatusText.Text = "Fout tijdens de Condor-sessie.";
+            MessageBox.Show($"Er ontstond een fout tijdens processtap '{failedStep}'.\n\n{ex.Message}",
                 "GoZC Launcher", MessageBoxButton.OK, MessageBoxImage.Error);
         }
-        finally { FlyButton.IsEnabled = true; }
+        finally
+        {
+            _activeCondor?.Dispose(); _activeCondor = null;
+            if (!CondorProcessService.AnyRunning())
+            {
+                RestoreLauncher(); ResetSelections();
+                _flightState.Reset(); StatusText.Text = "Gereed"; FlyButton.IsEnabled = true;
+                Logger.SessionInfo(sessionId, "Teruggekeerd naar GoZC-menu; status Ready.");
+            }
+            else
+            {
+                RestoreLauncher(); _flightState.Reset();
+                FlyButton.IsEnabled = !sessionOwnsCondor;
+                Logger.SessionError(sessionId, sessionOwnsCondor
+                    ? "Condor uit deze sessie draait nog; een nieuwe vlucht blijft geblokkeerd."
+                    : "Bestaande Condor-sessie draait nog; een nieuwe start wordt bij de volgende poging opnieuw gecontroleerd.");
+            }
+            _flightLock.Release();
+        }
+    }
+
+    private async Task<bool> EnsureNoExistingCondorAsync()
+    {
+        while (CondorProcessService.AnyRunning())
+        {
+            var dialog = new CondorRunningWindow("Condor draait nog.\n\nSluit de bestaande Condor-sessie voordat een nieuwe vlucht wordt gestart.") { Owner = this };
+            if (dialog.ShowDialog() != true || dialog.Choice == CondorRunningChoice.Cancel) return false;
+            await Task.Delay(250, _lifetime.Token);
+        }
+        return true;
+    }
+
+    private async Task WaitForManualCondorExitAsync(string sessionId)
+    {
+        while (CondorProcessService.AnyRunning())
+        {
+            RestoreLauncher();
+            var dialog = new CondorRunningWindow("Condor kon niet volledig worden afgesloten.\n\n" +
+                "Sluit Condor via Taakbeheer en klik daarna op 'Opnieuw controleren'.") { Owner = this };
+            if (dialog.ShowDialog() != true || dialog.Choice == CondorRunningChoice.Cancel)
+            {
+                Logger.SessionInfo(sessionId, "Dialoog geannuleerd; Condor blijft op de achtergrond bewaakt tot het proces eindigt.");
+                while (CondorProcessService.AnyRunning()) await Task.Delay(500, _lifetime.Token);
+                return;
+            }
+            Logger.SessionInfo(sessionId, "Gebruiker heeft opnieuw controleren gekozen.");
+            await Task.Delay(250, _lifetime.Token);
+        }
+    }
+
+    private void Transition(FlightSessionState state, string sessionId, string message)
+    {
+        _flightState.MoveTo(state); Logger.SessionInfo(sessionId, $"Status -> {state}. {message}");
+    }
+
+    private void RestoreLauncher()
+    {
+        Show(); WindowState = WindowState.Maximized; ShowInTaskbar = true;
+        if (!Activate()) { Topmost = true; Topmost = false; }
+    }
+
+    private void ResetSelections()
+    {
+        BuildScenarioMenu(); ScreenMode.IsChecked = true; VrMode.IsChecked = false;
     }
 
     private void Settings_Click(object sender, RoutedEventArgs e)
@@ -142,4 +247,5 @@ public partial class MainWindow : Window
     }
 
     private void Exit_Click(object sender, RoutedEventArgs e) => Close();
+    protected override void OnClosed(EventArgs e) { _lifetime.Cancel(); _lifetime.Dispose(); _flightLock.Dispose(); base.OnClosed(e); }
 }

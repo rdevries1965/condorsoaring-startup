@@ -6,13 +6,13 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-dotnet restore GoZCCondorLauncher.csproj
+dotnet restore GoZCCondorLauncher.sln
 if errorlevel 1 goto :failed
 
-dotnet build GoZCCondorLauncher.csproj -c Release --no-restore
+dotnet build GoZCCondorLauncher.sln -c Release --no-restore
 if errorlevel 1 goto :failed
 
-dotnet run --project tests\GoZCCondorLauncher.Tests.csproj -c Release
+dotnet test GoZCCondorLauncher.sln -c Release --no-build
 if errorlevel 1 goto :failed
 
 dotnet publish GoZCCondorLauncher.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true

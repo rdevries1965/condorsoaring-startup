@@ -21,13 +21,13 @@ jobs:
           dotnet-version: "8.0.x"
 
       - name: Dependencies herstellen
-        run: dotnet restore GoZCCondorLauncher.csproj
+        run: dotnet restore GoZCCondorLauncher.sln
 
       - name: Release bouwen
-        run: dotnet build GoZCCondorLauncher.csproj -c Release --no-restore
+        run: dotnet build GoZCCondorLauncher.sln -c Release --no-restore
 
       - name: Tests uitvoeren
-        run: dotnet run --project tests/GoZCCondorLauncher.Tests.csproj -c Release
+        run: dotnet test GoZCCondorLauncher.sln -c Release --no-build
 
       - name: Self-contained Windows-app publiceren
         run: dotnet publish GoZCCondorLauncher.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true

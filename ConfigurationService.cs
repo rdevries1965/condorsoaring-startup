@@ -34,7 +34,7 @@ public static class ConfigurationService
         }
     }
 
-    public static bool TryLoadUserSettings(out UserSettings settings, string? path = null)
+    public static bool TryLoadUserSettings(out UserSettings settings, string? path = null, bool logErrors = true)
     {
         settings = new UserSettings();
         path ??= UserSettingsPath;
@@ -49,13 +49,13 @@ public static class ConfigurationService
         }
         catch (JsonException ex)
         {
-            Logger.Error($"Beschadigd instellingenbestand '{path}': {ex}");
+            if (logErrors) Logger.Error($"Beschadigd instellingenbestand '{path}': {ex}");
             settings = new UserSettings();
             return false;
         }
         catch (IOException ex)
         {
-            Logger.Error($"Instellingenbestand kon niet worden gelezen '{path}': {ex}");
+            if (logErrors) Logger.Error($"Instellingenbestand kon niet worden gelezen '{path}': {ex}");
             settings = new UserSettings();
             return false;
         }

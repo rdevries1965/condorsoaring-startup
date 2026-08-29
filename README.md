@@ -1,6 +1,6 @@
 # GoZC Condor Launcher
 
-Nederlandstalige Windows-launcher voor de GoZC Condor 3-clubsimulator. De app is gebouwd met C#, .NET 8 en WPF en bevat de 15 bestaande clubscenario's. Versie 1.1 voegt beveiligde instellingen, configureerbare scenariogroepen en automatische versie-informatie toe.
+Nederlandstalige Windows-launcher voor de GoZC Condor 3-clubsimulator. De app is gebouwd met C#, .NET 8 en WPF en bevat de 15 bestaande clubscenario's. Versie 1.2 voegt een robuuste, volledig bewaakte Condor-sessiecyclus toe.
 
 ## Publiceren
 
@@ -42,6 +42,14 @@ Selecteer een scenario en kies **VR-bril** of **Scherm**. Voor het starten contr
 
 Als het gekozen configuratiebestand ontbreekt, blijft de bestaande `Setup.ini` onaangeroerd en verschijnt het volledige ontbrekende pad in de foutmelding.
 
+### Bewaakte Condor-sessie
+
+De launcher staat slechts één vluchtworkflow tegelijk toe. Voor iedere vlucht wordt gecontroleerd of `Condor.exe` al draait. Een bestaande sessie kan naar voren worden gebracht, opnieuw worden gecontroleerd of ongemoeid worden gelaten; de launcher beëindigt nooit zonder expliciete toestemming een bestaand proces.
+
+Tijdens de vlucht blijft de launcher geminimaliseerd actief. Hij bewaakt zowel `DEBRIEFING` als het verdwijnen van Condor door handmatig afsluiten of een crash. Na `DEBRIEFING` worden `MAIN MENU`, het hoofdvenster en een eventuele afsluitbevestiging automatisch bediend. Daarna wordt maximaal 30 seconden gecontroleerd of werkelijk alle `Condor.exe`-processen zijn gestopt. Pas dan keert de launcher terug naar **Gereed**, scenario 1 en **Scherm**.
+
+Als `FREE FLIGHT` of `Start flight` niet automatisch kan worden bediend, blijft Condor open en kan de gebruiker handmatig doorgaan. De procesbewaking blijft actief en herstelt het GoZC-menu zodra Condor eindigt.
+
 ## Scenario's en standaardconfiguratie
 
 `appsettings.json` bevat alleen de standaardwerking en de lijst met scenario's. Persoonlijke computer- en pilotpaden horen uitsluitend in `user-settings.json`. Nieuwe scenario's kunnen aan de JSON-lijst worden toegevoegd zonder programmacode te wijzigen; het genoemde `.fpl`-bestand moet in de ingestelde Flightplans-map staan.
@@ -57,10 +65,10 @@ Het logbestand staat in:
 De tests zijn zonder externe testpakketten uit te voeren met:
 
 ```powershell
-dotnet run --project tests\GoZCCondorLauncher.Tests.csproj -c Release
+dotnet test GoZCCondorLauncher.sln -c Release
 ```
 
-Ze controleren mapherkenning, pilotdetectie, veilige instellingen, wachtwoord-hashing en -validatie, migratie, groepsnamen en sortering, rasterkolommen, versie-uitlezing en beschadigde JSON.
+De MSTest-suite start nooit een echte Condor-installatie. Ze controleert mapherkenning, veilige instellingen, wachtwoordbeveiliging, migratie, groepsindeling, statusovergangen, dubbele starts, een volledige sessiecyclus, handmatig sluiten/crash/timeout en dat testfouten niet in het productielog terechtkomen.
 
 ## Nog testen op de echte Condor-pc
 
