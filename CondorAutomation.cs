@@ -42,6 +42,7 @@ internal static class CondorAutomation
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int maxCount);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr hWnd, StringBuilder text, int maxCount);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr hWnd, out Rect rect);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out Rect rect);
@@ -70,9 +71,44 @@ internal static class CondorAutomation
         var planner = await WaitForWindowAsync(
             t => t.Contains("FLIGHT PLANNER", StringComparison.OrdinalIgnoreCase),
             "FLIGHT PLANNER", appSettings.WindowTimeoutSeconds, token);
-        await ClickChildAsync(planner, "Start flight", appSettings.WindowTimeoutSeconds, token, usePhysicalMouse: false);
+        await StartFlightFromPlannerAsync(planner, appSettings.WindowTimeoutSeconds, token);
         Logger.Info("Vluchtopdracht gestart.");
     }
+
+    private static async Task StartFlightFromPlannerAsync(IntPtr planner, int timeoutSeconds, CancellationToken token)
+    {
+        // Bij grotere scenario's is het planner-venster al zichtbaar terwijl Condor
+        // landschap en taak nog inleest. Wacht daarom voordat Start flight wordt bediend.
+        await Task.Delay(2000, token);
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            if (!IsPlannerVisible(planner)) return;
+            Logger.Info($"Start flight-poging {attempt}; wachten op een gereed Condor Flight Planner-venster.");
+            await ClickChildAsync(planner, "Start flight", timeoutSeconds, token, usePhysicalMouse: true);
+
+            var until = DateTime.UtcNow.AddSeconds(6);
+            while (DateTime.UtcNow < until)
+            {
+                token.ThrowIfCancellationRequested();
+                if (!IsPlannerVisible(planner))
+                {
+                    Logger.Info("FLIGHT PLANNER is gesloten; de vluchtstart is door Condor geaccepteerd.");
+                    return;
+                }
+                await Task.Delay(250, token);
+            }
+
+            if (attempt < 3) await Task.Delay(1500, token);
+        }
+
+        throw new InvalidOperationException(
+            "Condor bleef in FLIGHT PLANNER staan nadat 'Start flight' drie keer is aangeklikt. " +
+            "Controleer in Condor of het scenario een ontbrekend landschap, vliegtuig of andere foutmelding toont.");
+    }
+
+    private static bool IsPlannerVisible(IntPtr planner) => IsWindow(planner) && IsWindowVisible(planner)
+        && Text(planner).Contains("FLIGHT PLANNER", StringComparison.OrdinalIgnoreCase);
 
     public static async Task FinishFlightAndCloseCondorAsync(AppSettings appSettings, CancellationToken token)
     {
