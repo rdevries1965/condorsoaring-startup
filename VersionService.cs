@@ -20,7 +20,10 @@ public static class VersionService
     public static string LauncherVersion()
     {
         var version = Assembly.GetExecutingAssembly().GetName().Version;
-        return version is null ? "onbekend" : $"{version.Major}.{version.Minor}";
+        if (version is null) return "onbekend";
+        return version.Build > 0
+            ? $"{version.Major}.{version.Minor}.{version.Build}"
+            : $"{version.Major}.{version.Minor}";
     }
 
     private static string? Clean(string? version)

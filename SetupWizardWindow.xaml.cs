@@ -251,6 +251,21 @@ public partial class SetupWizardWindow : Window
         SettingsLauncherVersionText.Text = $"GoZC Launcher versie {VersionService.LauncherVersion()}";
     }
 
+    private void OpenLog_Click(object sender, RoutedEventArgs e)
+    {
+        var folder = Path.GetDirectoryName(Logger.LogPath)!;
+        Directory.CreateDirectory(folder);
+        if (File.Exists(Logger.LogPath))
+        {
+            Process.Start(new ProcessStartInfo(Logger.LogPath) { UseShellExecute = true });
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo("explorer.exe", folder) { UseShellExecute = true });
+        MessageBox.Show($"Er is nog geen logbestand aangemaakt. De logmap is geopend:\n{folder}",
+            "Logbestand", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
     private static void OpenFolder(string? path)
     {
         if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))

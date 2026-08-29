@@ -97,6 +97,9 @@
           <TextBlock Text="Versie-informatie" FontSize="27" FontWeight="Bold" Foreground="#185D80"/>
           <TextBlock x:Name="SettingsCondorVersionText" FontSize="18" Margin="0,12,0,4"/>
           <TextBlock x:Name="SettingsLauncherVersionText" FontSize="18"/>
+          <Button Content="Logbestand openen" HorizontalAlignment="Left" Margin="0,18,0,0" Click="OpenLog_Click"/>
+          <TextBlock Margin="4,4,0,0" Foreground="#555" TextWrapping="Wrap"
+                     Text="Opent launcher.log in %LOCALAPPDATA%\GoZC Condor Launcher."/>
         </StackPanel>
       </TabItem>
     </TabControl>

@@ -28,7 +28,7 @@ De persoonlijke instellingen staan in:
 
 De app toont de wizard opnieuw wanneer dit bestand ontbreekt of beschadigd is, de configuratie onvolledig is of een vereist hoofdpad niet meer bestaat. Via **Instellingen** rechtsboven kunnen de gekozen mappen later worden aangepast en geopend. Deze knop vraagt altijd eerst om het beheerderswachtwoord; na drie verkeerde pogingen geldt een blokkering van 30 seconden.
 
-In **Scenarionamen** kunnen de zichtbare namen van alle 15 scenario's worden gewijzigd. In **Scenariogroepen** kunnen groepsnamen en hun sorteervolgorde worden aangepast of naar de standaardwaarden worden hersteld. Nummers, vaste `GroupId`-waarden en gekoppelde `.fpl`-bestanden blijven onveranderd. **Beveiliging en versies** bevat de functie om het beheerderswachtwoord te wijzigen en toont de Condor- en launcherversie.
+In **Scenarionamen** kunnen de zichtbare namen van alle 15 scenario's worden gewijzigd. In **Scenariogroepen** kunnen groepsnamen en hun sorteervolgorde worden aangepast of naar de standaardwaarden worden hersteld. Nummers, vaste `GroupId`-waarden en gekoppelde `.fpl`-bestanden blijven onveranderd. **Beveiliging en versies** bevat de functie om het beheerderswachtwoord te wijzigen, toont de Condor- en launcherversie en biedt een directe knop om `launcher.log` te openen.
 
 ### Wachtwoord vergeten
 
