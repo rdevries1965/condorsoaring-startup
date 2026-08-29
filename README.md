@@ -10,6 +10,8 @@ Installeer op de ontwikkel-pc de .NET 8 SDK en start `publish-windows.bat`. Het 
 
 Kopieer de volledige inhoud van die map naar de simulator-pc. .NET hoeft daar niet apart geïnstalleerd te zijn. `appsettings.json` moet naast de executable blijven staan.
 
+Getagde versies worden via GitHub Actions automatisch gebouwd en als downloadbare Windows-zip gepubliceerd onder **Releases**. De workflow bouwt, test en publiceert alleen wanneer een tag zoals `v1.1.1` wordt gepusht.
+
 ## Eerste start
 
 Bij de eerste start verschijnt automatisch de configuratiewizard. Deze vraagt om:

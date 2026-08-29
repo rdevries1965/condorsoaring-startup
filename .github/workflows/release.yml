@@ -1,0 +1,51 @@
+name: Build and publish Windows release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Broncode ophalen
+        uses: actions/checkout@v4
+
+      - name: .NET 8 installeren
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Dependencies herstellen
+        run: dotnet restore GoZCCondorLauncher.csproj
+
+      - name: Release bouwen
+        run: dotnet build GoZCCondorLauncher.csproj -c Release --no-restore
+
+      - name: Tests uitvoeren
+        run: dotnet run --project tests/GoZCCondorLauncher.Tests.csproj -c Release
+
+      - name: Self-contained Windows-app publiceren
+        run: dotnet publish GoZCCondorLauncher.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+
+      - name: Downloadzip maken
+        shell: pwsh
+        run: |
+          $publish = "bin/Release/net8.0-windows/win-x64/publish/*"
+          $archive = "GoZC-Condor-Launcher-$env:GITHUB_REF_NAME-win-x64.zip"
+          Compress-Archive -Path $publish -DestinationPath $archive -Force
+          "RELEASE_ARCHIVE=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: GitHub Release publiceren
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME $env:RELEASE_ARCHIVE `
+            --repo $env:GITHUB_REPOSITORY `
+            --title "GoZC Condor Launcher $env:GITHUB_REF_NAME" `
+            --generate-notes
