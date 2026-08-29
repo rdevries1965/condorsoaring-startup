@@ -1,0 +1,109 @@
+<Window x:Class="GoZCCondorLauncher.SetupWizardWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Instellingen – GoZC Condor Launcher" Height="720" Width="900"
+        MinHeight="650" MinWidth="780" WindowStartupLocation="CenterOwner"
+        Background="#F4F7F9">
+  <Window.Resources>
+    <Style TargetType="Button">
+      <Setter Property="Padding" Value="14,7"/><Setter Property="Margin" Value="4"/><Setter Property="MinHeight" Value="38"/>
+    </Style>
+    <Style TargetType="TextBox">
+      <Setter Property="Padding" Value="7"/><Setter Property="Margin" Value="4"/>
+    </Style>
+  </Window.Resources>
+  <Grid Margin="18">
+    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <TabControl Grid.Row="0">
+      <TabItem Header="Mappen en pilot">
+        <Grid Margin="18">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/><RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          <Grid Grid.Row="0" Margin="0,0,0,12">
+            <StackPanel>
+              <TextBlock Text="Condor-installatie instellen" FontSize="27" FontWeight="Bold" Foreground="#185D80"/>
+              <TextBlock x:Name="IntroText" Margin="0,6,150,0" TextWrapping="Wrap"/>
+            </StackPanel>
+            <Button Content="Mappen openen" HorizontalAlignment="Right" VerticalAlignment="Top" Click="OpenFolders_Click">
+              <Button.ContextMenu>
+                <ContextMenu>
+                  <MenuItem Header="Condor Main" Click="OpenMain_Click"/><MenuItem Header="Condor User" Click="OpenUser_Click"/>
+                  <MenuItem Header="Flightplans" Click="OpenFlightplans_Click"/><MenuItem Header="Gekozen pilotmap" Click="OpenPilot_Click"/>
+                </ContextMenu>
+              </Button.ContextMenu>
+            </Button>
+          </Grid>
+          <GroupBox Grid.Row="1" Header="1. Condor Main (programmamap)" Padding="10" Margin="0,0,0,9">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <TextBox x:Name="MainFolderText" IsReadOnly="True" VerticalContentAlignment="Center"/>
+              <Button Grid.Column="1" Content="Bladeren…" Click="BrowseMain_Click"/><Button Grid.Column="2" Content="Openen" Click="OpenMain_Click"/>
+            </Grid>
+          </GroupBox>
+          <GroupBox Grid.Row="2" Header="2. Condor User (gebruikersmap)" Padding="10" Margin="0,0,0,9">
+            <StackPanel>
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBox x:Name="UserFolderText" IsReadOnly="True" VerticalContentAlignment="Center"/>
+                <Button Grid.Column="1" Content="Bladeren…" Click="BrowseUser_Click"/><Button Grid.Column="2" Content="Openen" Click="OpenUser_Click"/>
+              </Grid>
+              <TextBlock x:Name="DerivedPathsText" Margin="5,6" TextWrapping="Wrap" Foreground="#444"/>
+            </StackPanel>
+          </GroupBox>
+          <GroupBox Grid.Row="3" Header="3. Pilotprofiel" Padding="10" Margin="0,0,0,9">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <ComboBox x:Name="PilotCombo" Margin="4" MinHeight="38" DisplayMemberPath="Name" SelectionChanged="PilotCombo_SelectionChanged"/>
+              <Button Grid.Column="1" Content="Pilotmap openen" Click="OpenPilot_Click"/>
+            </Grid>
+          </GroupBox>
+          <Border Grid.Row="4" Background="#FFF5D6" BorderBrush="#E2B84A" BorderThickness="1" Padding="12">
+            <TextBlock x:Name="ValidationText" TextWrapping="Wrap"/>
+          </Border>
+        </Grid>
+      </TabItem>
+      <TabItem Header="Scenarionamen">
+        <Grid Margin="18">
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+          <StackPanel Margin="0,0,0,12">
+            <TextBlock Text="Scenarionamen aanpassen" FontSize="27" FontWeight="Bold" Foreground="#185D80"/>
+            <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"
+                       Text="Pas alleen de zichtbare naam aan. Nummer, categorie, vliegtuig en .fpl-bestand blijven ongewijzigd."/>
+          </StackPanel>
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <ItemsControl x:Name="ScenarioNameList"/>
+          </ScrollViewer>
+        </Grid>
+      </TabItem>
+      <TabItem Header="Scenariogroepen">
+        <Grid Margin="18">
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+          <StackPanel Margin="0,0,0,10">
+            <TextBlock Text="Groepsnamen en volgorde" FontSize="27" FontWeight="Bold" Foreground="#185D80"/>
+            <TextBlock Text="De vaste GroupId blijft zichtbaar ter controle. Gebruik iedere sorteervolgorde maar één keer." TextWrapping="Wrap"/>
+          </StackPanel>
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"><ItemsControl x:Name="GroupNameList"/></ScrollViewer>
+          <Button Grid.Row="2" Content="Groepsnamen herstellen" HorizontalAlignment="Left" Click="RestoreGroups_Click"/>
+        </Grid>
+      </TabItem>
+      <TabItem Header="Beveiliging en versies">
+        <StackPanel Margin="22">
+          <TextBlock Text="Beveiliging" FontSize="27" FontWeight="Bold" Foreground="#185D80"/>
+          <TextBlock Margin="0,8,0,8" Text="De instellingen zijn beveiligd met een lokaal PBKDF2-SHA256-beheerderswachtwoord." TextWrapping="Wrap"/>
+          <Button Content="Beheerderswachtwoord wijzigen" HorizontalAlignment="Left" Click="ChangePassword_Click"/>
+          <Separator Margin="0,18"/>
+          <TextBlock Text="Versie-informatie" FontSize="27" FontWeight="Bold" Foreground="#185D80"/>
+          <TextBlock x:Name="SettingsCondorVersionText" FontSize="18" Margin="0,12,0,4"/>
+          <TextBlock x:Name="SettingsLauncherVersionText" FontSize="18"/>
+        </StackPanel>
+      </TabItem>
+    </TabControl>
+    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+      <Button Content="Annuleren" Width="130" IsCancel="True" Click="Cancel_Click"/>
+      <Button x:Name="SaveButton" Content="Opslaan en doorgaan" Width="210" IsDefault="True"
+              Background="#2890C7" Foreground="White" Click="Save_Click"/>
+    </StackPanel>
+  </Grid>
+</Window>

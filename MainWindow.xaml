@@ -1,0 +1,76 @@
+<Window x:Class="GoZCCondorLauncher.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="GoZC Condor Soaring Simulator" WindowState="Maximized"
+        MinWidth="1100" MinHeight="650" Background="#2890C7">
+  <Window.Resources>
+    <Style TargetType="GroupBox">
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontSize" Value="29" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="Margin" Value="10" />
+      <Setter Property="Padding" Value="14" />
+    </Style>
+    <Style TargetType="RadioButton">
+      <Setter Property="Foreground" Value="#101010" />
+      <Setter Property="FontSize" Value="27" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Margin" Value="7,10" />
+      <Setter Property="MinHeight" Value="48" />
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="FontSize" Value="22" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="MinHeight" Value="54" />
+      <Setter Property="Margin" Value="8" />
+      <Setter Property="Padding" Value="18,6" />
+    </Style>
+  </Window.Resources>
+  <Grid Margin="22,12">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <Grid Grid.Row="0" Margin="0,0,0,10">
+      <TextBlock Text="GoZC Condor Soaring Simulator"
+                 Foreground="White" FontFamily="Century Gothic" FontSize="48"
+                 FontWeight="Bold" HorizontalAlignment="Center" />
+      <Button Content="Instellingen" HorizontalAlignment="Right" VerticalAlignment="Center"
+              FontSize="16" MinHeight="42" Padding="14,4" Click="Settings_Click" />
+    </Grid>
+
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <ItemsControl x:Name="CategoryList">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+      </ItemsControl>
+    </ScrollViewer>
+
+    <Grid Grid.Row="2" Margin="0,8,0,0">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <StackPanel VerticalAlignment="Bottom">
+        <TextBlock x:Name="StatusText" Text="Gereed" Foreground="White" FontSize="15" />
+        <TextBlock x:Name="CondorVersionText" Foreground="White" Opacity="0.9" FontSize="14" />
+        <TextBlock x:Name="LauncherVersionText" Foreground="White" Opacity="0.8" FontSize="13" />
+      </StackPanel>
+      <Border Grid.Column="1" BorderBrush="White" BorderThickness="1" Padding="10">
+        <StackPanel>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+            <RadioButton x:Name="VrMode" Content="VR-bril" GroupName="Mode" Foreground="White" />
+            <RadioButton x:Name="ScreenMode" Content="Scherm" GroupName="Mode" Foreground="White" IsChecked="True" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal">
+            <Button x:Name="FlyButton" Content="Vliegen" Width="200" Click="Fly_Click" />
+            <Button Content="Menu afsluiten" Width="210" Click="Exit_Click" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Grid>
+</Window>
