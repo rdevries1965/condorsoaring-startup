@@ -95,12 +95,34 @@ internal static class CondorAutomation
         {
             Logger.SessionInfo(sessionId, $"Afsluitbevestiging verschenen: '{Text(confirmation)}'.");
             Activate(confirmation);
-            var button = FindChildByClass(confirmation, "TspSkinButton2");
-            var target = button != IntPtr.Zero ? button : confirmation;
-            PostMessage(target, WmKeyDown, (IntPtr)VkReturn, IntPtr.Zero);
-            await Task.Delay(80, token);
-            PostMessage(target, WmKeyUp, (IntPtr)VkReturn, IntPtr.Zero);
-            Logger.SessionInfo(sessionId, "Afsluiten bevestigd met Enter.");
+            var okButton = FindChildByCaption(confirmation, "OK");
+            var skinButton = FindChildByClass(confirmation, "TspSkinButton2");
+            var target = okButton != IntPtr.Zero ? okButton : skinButton;
+
+            if (target != IntPtr.Zero)
+            {
+                await PhysicalClickAsync(target, token);
+                Logger.SessionInfo(sessionId, $"Fysieke klik op afsluitknop '{Text(target)}' verzonden.");
+            }
+            else
+            {
+                Logger.SessionError(sessionId, $"Geen OK/TspSkinButton2 gevonden. Controls: {ChildTexts(confirmation)}");
+            }
+
+            if (!await WaitUntilWindowGoneAsync(confirmation, IsConfirmationTitle, TimeSpan.FromSeconds(3), token))
+            {
+                // Alleen als de fysieke knopklik niet is geaccepteerd, gebruik Enter
+                // nog als laatste compatibiliteitsfallback.
+                Activate(confirmation);
+                PostMessage(confirmation, WmKeyDown, (IntPtr)VkReturn, IntPtr.Zero);
+                await Task.Delay(80, token);
+                PostMessage(confirmation, WmKeyUp, (IntPtr)VkReturn, IntPtr.Zero);
+                Logger.SessionInfo(sessionId, "Afsluitbevestiging bleef zichtbaar; Enter-fallback verzonden.");
+            }
+            else
+            {
+                Logger.SessionInfo(sessionId, "Afsluitbevestiging gesloten; OK is geaccepteerd.");
+            }
         }
     }
 

@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>GoZCCondorLauncher</AssemblyName>
     <RootNamespace>GoZCCondorLauncher</RootNamespace>
-    <Version>1.2.1</Version>
+    <Version>1.2.2</Version>
   </PropertyGroup>
   <ItemGroup>
     <None Update="appsettings.json">
