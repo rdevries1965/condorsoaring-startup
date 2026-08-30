@@ -6,7 +6,7 @@ namespace GoZCCondorLauncher;
 
 internal static class CondorAutomation
 {
-    private const uint WmGetText = 0x000D, WmClose = 0x0010, WmKeyDown = 0x0100, WmKeyUp = 0x0101;
+    private const uint WmGetText = 0x000D, WmClose = 0x0010, WmKeyDown = 0x0100, WmKeyUp = 0x0101, BmClick = 0x00F5;
     private const uint MouseLeftDown = 0x0002, MouseLeftUp = 0x0004;
     private const int VkReturn = 0x0D, SwRestore = 9;
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
@@ -96,11 +96,14 @@ internal static class CondorAutomation
             Logger.SessionInfo(sessionId, $"Afsluitbevestiging verschenen: '{Text(confirmation)}'.");
             Activate(confirmation);
             var okButton = FindChildByCaption(confirmation, "OK");
-            var skinButton = FindChildByClass(confirmation, "TspSkinButton2");
+            // AHK ClassNN 'TspSkinButton2' betekent: de tweede child met
+            // werkelijke classnaam 'TspSkinButton', niet classnaam TspSkinButton2.
+            var skinButton = FindNthChildByClass(confirmation, "TspSkinButton", 2);
             var target = okButton != IntPtr.Zero ? okButton : skinButton;
 
             if (target != IntPtr.Zero)
             {
+                Logger.SessionInfo(sessionId, $"Afsluitknop gevonden: {DescribeControl(target)}.");
                 await PhysicalClickAsync(target, token);
                 Logger.SessionInfo(sessionId, $"Fysieke klik op afsluitknop '{Text(target)}' verzonden.");
             }
@@ -109,20 +112,41 @@ internal static class CondorAutomation
                 Logger.SessionError(sessionId, $"Geen OK/TspSkinButton2 gevonden. Controls: {ChildTexts(confirmation)}");
             }
 
-            if (!await WaitUntilWindowGoneAsync(confirmation, IsConfirmationTitle, TimeSpan.FromSeconds(3), token))
+            if (await WaitUntilWindowGoneAsync(confirmation, IsConfirmationTitle, TimeSpan.FromSeconds(2), token))
             {
-                // Alleen als de fysieke knopklik niet is geaccepteerd, gebruik Enter
-                // nog als laatste compatibiliteitsfallback.
+                Logger.SessionInfo(sessionId, "Afsluitbevestiging gesloten; fysieke OK-klik is geaccepteerd.");
+                return;
+            }
+
+            if (target != IntPtr.Zero)
+            {
+                PostMessage(target, BmClick, IntPtr.Zero, IntPtr.Zero);
+                Logger.SessionInfo(sessionId, "Afsluitbevestiging bleef zichtbaar; BM_CLICK naar OK-control verzonden.");
+            }
+            if (await WaitUntilWindowGoneAsync(confirmation, IsConfirmationTitle, TimeSpan.FromSeconds(2), token))
+            {
+                Logger.SessionInfo(sessionId, "Afsluitbevestiging gesloten; BM_CLICK is geaccepteerd.");
+                return;
+            }
+
+            // Boots de werkende AHK-regel exact na: ControlSend naar de
+            // TspSkinButton-control zelf, niet naar het bovenliggende venster.
+            if (target != IntPtr.Zero)
+            {
                 Activate(confirmation);
-                PostMessage(confirmation, WmKeyDown, (IntPtr)VkReturn, IntPtr.Zero);
+                PostMessage(target, WmKeyDown, (IntPtr)VkReturn, IntPtr.Zero);
                 await Task.Delay(80, token);
-                PostMessage(confirmation, WmKeyUp, (IntPtr)VkReturn, IntPtr.Zero);
-                Logger.SessionInfo(sessionId, "Afsluitbevestiging bleef zichtbaar; Enter-fallback verzonden.");
+                PostMessage(target, WmKeyUp, (IntPtr)VkReturn, IntPtr.Zero);
+                Logger.SessionInfo(sessionId, "Enter rechtstreeks naar OK/TspSkinButton-control verzonden.");
             }
-            else
+
+            if (await WaitUntilWindowGoneAsync(confirmation, IsConfirmationTitle, TimeSpan.FromSeconds(3), token))
             {
-                Logger.SessionInfo(sessionId, "Afsluitbevestiging gesloten; OK is geaccepteerd.");
+                Logger.SessionInfo(sessionId, "Afsluitbevestiging gesloten; control-Enter is geaccepteerd.");
+                return;
             }
+
+            Logger.SessionError(sessionId, "Afsluitbevestiging bleef na fysieke klik, BM_CLICK en control-Enter zichtbaar.");
         }
     }
 
@@ -277,14 +301,30 @@ internal static class CondorAutomation
         var texts = new List<string>(); EnumChildWindows(parent, (handle, _) => { var text = Text(handle); if (text.Length > 0) texts.Add(text); return true; }, IntPtr.Zero);
         return texts.Count == 0 ? "(geen teksten)" : string.Join(" | ", texts.Distinct(StringComparer.OrdinalIgnoreCase));
     }
-    private static IntPtr FindChildByClass(IntPtr parent, string className)
+    private static IntPtr FindNthChildByClass(IntPtr parent, string className, int occurrence)
     {
-        IntPtr found = IntPtr.Zero; EnumChildWindows(parent, (handle, _) =>
+        IntPtr found = IntPtr.Zero;
+        var count = 0;
+        EnumChildWindows(parent, (handle, _) =>
         {
-            var buffer = new StringBuilder(256); GetClassName(handle, buffer, buffer.Capacity);
-            if (buffer.ToString().Equals(className, StringComparison.OrdinalIgnoreCase)) { found = handle; return false; }
-            return true;
-        }, IntPtr.Zero); return found;
+            var buffer = new StringBuilder(256);
+            GetClassName(handle, buffer, buffer.Capacity);
+            if (!buffer.ToString().Equals(className, StringComparison.OrdinalIgnoreCase)) return true;
+            count++;
+            if (count != occurrence) return true;
+            found = handle;
+            return false;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    private static string DescribeControl(IntPtr control)
+    {
+        var className = new StringBuilder(256);
+        GetClassName(control, className, className.Capacity);
+        return GetWindowRect(control, out var rect)
+            ? $"tekst='{Text(control)}', class='{className}', positie=({rect.Left},{rect.Top})-({rect.Right},{rect.Bottom})"
+            : $"tekst='{Text(control)}', class='{className}', positie=onbekend";
     }
 
     private static IntPtr FindChildByCaption(IntPtr parent, string caption)
