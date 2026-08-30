@@ -6,7 +6,7 @@ namespace GoZCCondorLauncher;
 
 internal static class CondorAutomation
 {
-    private const uint WmGetText = 0x000D, WmClose = 0x0010, WmKeyDown = 0x0100, WmKeyUp = 0x0101, BmClick = 0x00F5;
+    private const uint WmSetFocus = 0x0007, WmGetText = 0x000D, WmClose = 0x0010, WmKeyDown = 0x0100, WmKeyUp = 0x0101, BmClick = 0x00F5;
     private const uint MouseLeftDown = 0x0002, MouseLeftUp = 0x0004;
     private const int VkReturn = 0x0D, SwRestore = 9;
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
@@ -28,6 +28,10 @@ internal static class CondorAutomation
     [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] private static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
     [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr childAfter, string? className, string? windowTitle);
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
     private static extern IntPtr SendMessageText(IntPtr hWnd, uint msg, IntPtr wParam, StringBuilder lParam);
 
@@ -95,11 +99,31 @@ internal static class CondorAutomation
         {
             Logger.SessionInfo(sessionId, $"Afsluitbevestiging verschenen: '{Text(confirmation)}'.");
             Activate(confirmation);
+            await Task.Delay(100, token);
             var okButton = FindChildByCaption(confirmation, "OK");
             // AHK ClassNN 'TspSkinButton2' betekent: de tweede child met
-            // werkelijke classnaam 'TspSkinButton', niet classnaam TspSkinButton2.
-            var skinButton = FindNthChildByClass(confirmation, "TspSkinButton", 2);
-            var target = okButton != IntPtr.Zero ? okButton : skinButton;
+            // werkelijke classnaam 'TspSkinButton'. Alleen DIRECTE children tellen;
+            // EnumChildWindows telt ook kleinkinderen en leverde daardoor soms de verkeerde knop.
+            var skinButton = FindDirectClassNN(confirmation, "TspSkinButton", 2);
+            var target = skinButton != IntPtr.Zero ? skinButton : okButton;
+
+            // Dit is de letterlijke C#-variant van de werkende AHK-regel:
+            // ControlSend, TspSkinButton2, {Enter}, Condor 3
+            if (skinButton != IntPtr.Zero)
+            {
+                Logger.SessionInfo(sessionId, $"AHK-doel TspSkinButton2 gevonden: {DescribeControl(skinButton)}.");
+                SendMessage(skinButton, WmSetFocus, IntPtr.Zero, IntPtr.Zero);
+                PostMessage(skinButton, WmKeyDown, (IntPtr)VkReturn, IntPtr.Zero);
+                await Task.Delay(100, token);
+                PostMessage(skinButton, WmKeyUp, (IntPtr)VkReturn, IntPtr.Zero);
+                Logger.SessionInfo(sessionId, "AHK-equivalent ControlSend naar TspSkinButton2 verzonden.");
+            }
+
+            if (await WaitUntilWindowGoneAsync(confirmation, IsConfirmationTitle, TimeSpan.FromSeconds(3), token))
+            {
+                Logger.SessionInfo(sessionId, "Afsluitbevestiging gesloten; AHK-equivalent is geaccepteerd.");
+                return;
+            }
 
             if (target != IntPtr.Zero)
             {
@@ -301,20 +325,14 @@ internal static class CondorAutomation
         var texts = new List<string>(); EnumChildWindows(parent, (handle, _) => { var text = Text(handle); if (text.Length > 0) texts.Add(text); return true; }, IntPtr.Zero);
         return texts.Count == 0 ? "(geen teksten)" : string.Join(" | ", texts.Distinct(StringComparer.OrdinalIgnoreCase));
     }
-    private static IntPtr FindNthChildByClass(IntPtr parent, string className, int occurrence)
+    private static IntPtr FindDirectClassNN(IntPtr parent, string className, int occurrence)
     {
-        IntPtr found = IntPtr.Zero;
-        var count = 0;
-        EnumChildWindows(parent, (handle, _) =>
+        var found = IntPtr.Zero;
+        for (var count = 0; count < occurrence; count++)
         {
-            var buffer = new StringBuilder(256);
-            GetClassName(handle, buffer, buffer.Capacity);
-            if (!buffer.ToString().Equals(className, StringComparison.OrdinalIgnoreCase)) return true;
-            count++;
-            if (count != occurrence) return true;
-            found = handle;
-            return false;
-        }, IntPtr.Zero);
+            found = FindWindowEx(parent, found, className, null);
+            if (found == IntPtr.Zero) break;
+        }
         return found;
     }
 
