@@ -6,9 +6,11 @@ namespace GoZCCondorLauncher;
 
 internal static class CondorAutomation
 {
-    private const uint WmSetFocus = 0x0007, WmGetText = 0x000D, WmClose = 0x0010, WmKeyDown = 0x0100, WmKeyUp = 0x0101, BmClick = 0x00F5;
+    private const uint WmSetFocus = 0x0007, WmGetText = 0x000D, WmClose = 0x0010, WmKeyDown = 0x0100, WmKeyUp = 0x0101,
+        WmCommand = 0x0111, BmClick = 0x00F5;
     private const uint MouseLeftDown = 0x0002, MouseLeftUp = 0x0004;
-    private const int VkReturn = 0x0D, SwRestore = 9;
+    private const int VkReturn = 0x0D, IdOk = 1, SwRestore = 9;
+    private const uint KeyEventKeyUp = 0x0002;
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
@@ -27,6 +29,7 @@ internal static class CondorAutomation
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out Point point);
     [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] private static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+    [DllImport("user32.dll")] private static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extraInfo);
     [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr childAfter, string? className, string? windowTitle);
@@ -94,12 +97,34 @@ internal static class CondorAutomation
         Activate(main); PostMessage(main, WmClose, IntPtr.Zero, IntPtr.Zero);
         Logger.SessionInfo(sessionId, "Verzoek tot sluiten van Condor-hoofdvenster verzonden.");
 
-        var confirmation = await TryWaitForAnyWindowAsync(IsConfirmationTitle, 15, token);
+        var confirmation = await TryWaitForExitConfirmationAsync(15, token);
         if (confirmation != IntPtr.Zero)
         {
             Logger.SessionInfo(sessionId, $"Afsluitbevestiging verschenen: '{Text(confirmation)}'.");
             Activate(confirmation);
+            await Task.Delay(200, token);
+
+            // Betrouwbaarste route voor een actief modaal dialoog: een echte Enter-toets.
+            // Dit werkt ook wanneer Delphi zijn skin-knoppen niet als normale controls exposeert.
+            keybd_event((byte)VkReturn, 0, 0, UIntPtr.Zero);
             await Task.Delay(100, token);
+            keybd_event((byte)VkReturn, 0, KeyEventKeyUp, UIntPtr.Zero);
+            Logger.SessionInfo(sessionId, "Enter naar het actieve venster 'Exit Condor?' verzonden.");
+            if (await WaitUntilWindowGoneAsync(confirmation, IsConfirmationTitle, TimeSpan.FromSeconds(2), token))
+            {
+                Logger.SessionInfo(sessionId, "Afsluitbevestiging gesloten; venster-Enter is geaccepteerd.");
+                return;
+            }
+
+            // Veel dialoogvensters behandelen OK als WM_COMMAND/IDOK, onafhankelijk van de skin.
+            SendMessage(confirmation, WmCommand, (IntPtr)IdOk, IntPtr.Zero);
+            Logger.SessionInfo(sessionId, "WM_COMMAND/IDOK naar afsluitbevestiging verzonden.");
+            if (await WaitUntilWindowGoneAsync(confirmation, IsConfirmationTitle, TimeSpan.FromSeconds(2), token))
+            {
+                Logger.SessionInfo(sessionId, "Afsluitbevestiging gesloten; IDOK is geaccepteerd.");
+                return;
+            }
+
             var okButton = FindChildByCaption(confirmation, "OK");
             // AHK ClassNN 'TspSkinButton2' betekent: de tweede child met
             // werkelijke classnaam 'TspSkinButton'. Alleen DIRECTE children tellen;
@@ -122,6 +147,17 @@ internal static class CondorAutomation
             if (await WaitUntilWindowGoneAsync(confirmation, IsConfirmationTitle, TimeSpan.FromSeconds(3), token))
             {
                 Logger.SessionInfo(sessionId, "Afsluitbevestiging gesloten; AHK-equivalent is geaccepteerd.");
+                return;
+            }
+
+            // Laatste onafhankelijke fallback: klik op de relatieve OK-positie in het
+            // dialoogvenster (ongeveer 30% breed, 81% hoog), dus niet op vaste scherm-X/Y.
+            Activate(confirmation);
+            await PhysicalClickRelativeAsync(confirmation, 0.30, 0.81, token);
+            Logger.SessionInfo(sessionId, "Relatieve klik op de zichtbare OK-positie verzonden.");
+            if (await WaitUntilWindowGoneAsync(confirmation, IsConfirmationTitle, TimeSpan.FromSeconds(3), token))
+            {
+                Logger.SessionInfo(sessionId, "Afsluitbevestiging gesloten; relatieve OK-klik is geaccepteerd.");
                 return;
             }
 
@@ -280,6 +316,25 @@ internal static class CondorAutomation
         return IntPtr.Zero;
     }
 
+    private static async Task<IntPtr> TryWaitForExitConfirmationAsync(int seconds, CancellationToken token)
+    {
+        var until = DateTime.UtcNow.AddSeconds(seconds);
+        while (DateTime.UtcNow < until)
+        {
+            IntPtr found = IntPtr.Zero;
+            EnumWindows((handle, _) =>
+            {
+                if (!IsWindowVisible(handle) || !IsConfirmationTitle(Text(handle)) || !BelongsToCondor(handle)) return true;
+                if (!ChildTexts(handle).Contains("Exit Condor?", StringComparison.OrdinalIgnoreCase)) return true;
+                found = handle;
+                return false;
+            }, IntPtr.Zero);
+            if (found != IntPtr.Zero) return found;
+            await Task.Delay(250, token);
+        }
+        return IntPtr.Zero;
+    }
+
     private static async Task ClickChildAsync(IntPtr parent, string caption, int timeoutSeconds, string sessionId, CancellationToken token)
     {
         var until = DateTime.UtcNow.AddSeconds(timeoutSeconds);
@@ -311,6 +366,19 @@ internal static class CondorAutomation
         await Task.Delay(300, token); SetCursorPos(x, y); await Task.Delay(120, token);
         mouse_event(MouseLeftDown, 0, 0, 0, UIntPtr.Zero); await Task.Delay(100, token);
         mouse_event(MouseLeftUp, 0, 0, 0, UIntPtr.Zero); await Task.Delay(250, token); SetCursorPos(original.X, original.Y);
+    }
+
+    private static async Task PhysicalClickRelativeAsync(IntPtr window, double xFraction, double yFraction, CancellationToken token)
+    {
+        if (!GetWindowRect(window, out var rect) || rect.Right <= rect.Left || rect.Bottom <= rect.Top)
+            throw new InvalidOperationException("De actuele positie van het Condor-dialoogvenster kon niet worden bepaald.");
+        GetCursorPos(out var original);
+        var x = rect.Left + (int)((rect.Right - rect.Left) * xFraction);
+        var y = rect.Top + (int)((rect.Bottom - rect.Top) * yFraction);
+        SetCursorPos(x, y); await Task.Delay(150, token);
+        mouse_event(MouseLeftDown, 0, 0, 0, UIntPtr.Zero); await Task.Delay(100, token);
+        mouse_event(MouseLeftUp, 0, 0, 0, UIntPtr.Zero); await Task.Delay(250, token);
+        SetCursorPos(original.X, original.Y);
     }
 
     private static string Text(IntPtr handle)
