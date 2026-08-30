@@ -10,6 +10,7 @@ internal static class CondorAutomation
         WmCommand = 0x0111, BmClick = 0x00F5;
     private const uint MouseLeftDown = 0x0002, MouseLeftUp = 0x0004;
     private const int VkReturn = 0x0D, IdOk = 1, SwRestore = 9;
+    private const uint GwOwner = 4;
     private const uint KeyEventKeyUp = 0x0002;
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -25,6 +26,7 @@ internal static class CondorAutomation
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int command);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr hWnd, uint command);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out Rect rect);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out Point point);
     [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
@@ -97,7 +99,7 @@ internal static class CondorAutomation
         Activate(main); PostMessage(main, WmClose, IntPtr.Zero, IntPtr.Zero);
         Logger.SessionInfo(sessionId, "Verzoek tot sluiten van Condor-hoofdvenster verzonden.");
 
-        var confirmation = await TryWaitForExitConfirmationAsync(15, token);
+        var confirmation = await TryWaitForExitConfirmationAsync(main, 15, sessionId, token);
         if (confirmation != IntPtr.Zero)
         {
             Logger.SessionInfo(sessionId, $"Afsluitbevestiging verschenen: '{Text(confirmation)}'.");
@@ -316,7 +318,8 @@ internal static class CondorAutomation
         return IntPtr.Zero;
     }
 
-    private static async Task<IntPtr> TryWaitForExitConfirmationAsync(int seconds, CancellationToken token)
+    private static async Task<IntPtr> TryWaitForExitConfirmationAsync(
+        IntPtr mainWindow, int seconds, string sessionId, CancellationToken token)
     {
         var until = DateTime.UtcNow.AddSeconds(seconds);
         while (DateTime.UtcNow < until)
@@ -325,13 +328,22 @@ internal static class CondorAutomation
             EnumWindows((handle, _) =>
             {
                 if (!IsWindowVisible(handle) || !IsConfirmationTitle(Text(handle)) || !BelongsToCondor(handle)) return true;
-                if (!ChildTexts(handle).Contains("Exit Condor?", StringComparison.OrdinalIgnoreCase)) return true;
+                // Condor tekent "Exit Condor?" zelf; die tekst bestaat niet als uitleesbaar
+                // Windows-control. De popup is wel een apart zichtbaar Condor-venster met
+                // titel "Condor 3", normaal gesproken owned door het hoofdvenster.
+                var owner = GetWindow(handle, GwOwner);
+                if (owner != IntPtr.Zero && owner != mainWindow) return true;
                 found = handle;
                 return false;
             }, IntPtr.Zero);
-            if (found != IntPtr.Zero) return found;
+            if (found != IntPtr.Zero)
+            {
+                Logger.SessionInfo(sessionId, $"Afsluitdialoog herkend aan Condor-venster/eigenaar; controls: {ChildTexts(found)}.");
+                return found;
+            }
             await Task.Delay(250, token);
         }
+        Logger.SessionError(sessionId, "Geen zichtbaar Condor-afsluitdialoog met titel 'Condor 3' gevonden binnen 15 seconden.");
         return IntPtr.Zero;
     }
 
